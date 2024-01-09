@@ -1,0 +1,50 @@
+---
+# directory ".k8s/overlays/<stg/prd>" must to be already created before adding this workflow
+# yamllint disable rule:line-length
+name: CD
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_call:
+    inputs:
+      APP_NAME:
+        required: false
+        type: string
+      APP_ENV:
+        required: true
+        type: string
+      KEEL_WEBHOOK_URL:
+        required: true
+        type: string
+    secrets:
+      ALERTS_CHANNEL:
+        required: true
+env:
+  ALERTS_CHANNEL: "${{ secrets.ALERTS_CHANNEL }}"
+  KEEL_WEBHOOK_URL: "${{ inputs.KEEL_WEBHOOK_URL }}"
+  APP_ENV: "${{ inputs.APP_ENV }}"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Short SHA
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
+        id: sha
+        run: echo "::set-output name=sha8::$(echo ${GITHUB_SHA} | cut -c1-8)"
+      - name: deploy-${{ env.APP_ENV }}
+        uses: jaapio/keelsh-deploy@master
+        with:
+          keelBaseUrl: ${{ env.KEEL_WEBHOOK_URL }}
+          image: ghcr.io/${{ github.repository }}
+          tag: ${{ steps.sha.outputs.sha8 }}
+          
+      - name: Deploy ${{ env.APP_NAME }} ${{ env.APP_ENV }} version ${{ steps.sha.outputs.sha8 }} by user ${{ github.actor }}
+        if: always()
+        uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: "${{ env.ALERTS_CHANNEL }}"
+
+

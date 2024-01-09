@@ -1,0 +1,74 @@
+name: COMPOSITION
+
+on:
+  workflow_call:
+    inputs:
+      CLAIM_NAME:
+        required: true
+        type: string
+      MANIFESTS_DIR:
+        required: true
+        type: string
+    secrets:
+      KUBE_CONFIG:
+        required: true
+
+
+env:
+  CLAIM_NAME: "${{ inputs.CLAIM_NAME }}"
+  MANIFESTS_DIR: "${{ inputs.MANIFESTS_DIR }}"
+  KUBE_CONFIG: "${{ secrets.KUBE_CONFIG }}"
+  KUSTOMIZE_VERSION: 4.5.5
+
+concurrency:
+  group: ${{ inputs.CLAIM_NAME }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: ${{ inputs.CLAIM_NAME }}
+    name: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "CLAIM_NAME=$(echo ${{ inputs.CLAIM_NAME }})" >> $GITHUB_ENV
+          echo "MANIFESTS_DIR=$(echo ${{ inputs.MANIFESTS_DIR }})" >> $GITHUB_ENV
+        name: set env variabls 
+
+      - name: Check out code
+        uses: actions/checkout@v2
+      
+      - name: Get Short SHA
+        id: sha
+        run: echo "::set-output name=sha8::$(echo ${GITHUB_SHA} | cut -c1-8)"
+
+      - uses: azure/setup-kubectl@v1
+        id: install
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v1
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }}
+
+      - uses: azure/k8s-set-context@v1
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }} # Use secret (https://developer.github.com/actions/managing-workflows/storing-secrets/)
+        id: set-context
+
+      - uses: actions/setup-python@v1
+
+      - uses: BSFishy/pip-action@v1
+        with:
+          packages: kubesplit
+
+      - name: Setup yq
+        uses: chrisdickinson/setup-yq@latest
+
+      - name: Deploy Composition
+        run: |
+          cd $MANIFESTS_DIR
+          kustomize build|kubectl apply -f -
+          export COMPOSITION=$(kubectl get compositionrevisions|grep $CLAIM_NAME|grep True|awk '{print $1}')
+          kubectl patch workloadclaim $CLAIM_NAME -p '{"spec":{"compositionRevisionRef":{"name":"'${COMPOSITION}'"}}}'
